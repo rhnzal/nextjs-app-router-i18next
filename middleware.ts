@@ -1,35 +1,98 @@
-import { NextRequest, NextResponse } from 'next/server'
-import acceptLanguage from 'accept-language'
-import { fallbackLng, languages } from './app/i18n/settings'
+import Negotiator from "negotiator";
+import { NextRequest, NextResponse } from "next/server";
+ 
+let locales = ['id', 'en']
+ 
+// Get the preferred locale, similar to the above or using a library
+function getLocale(request : NextRequest) {
 
-acceptLanguage.languages(languages)
+  const headers : any = {};
+  request.headers.forEach((value : any, key : any) => {
+    headers[key] = value;
+  });
 
-export const config = {
-  // matcher: '/:lng*'
-  matcher: ['/((?!api|_next/static|_next/image|assets|favicon.ico|sw.js|site.webmanifest).*)']
+  const negotiator = new Negotiator({headers});
+  const preferredLanguages = negotiator.languages();
+
+  console.log("Preferred languages: ", preferredLanguages);
+  
+
+  for (const lang of preferredLanguages) {
+    if (locales.includes(lang)) {
+      return lang;
+    }
+  }
+
+  return 'en';
 }
+ 
+export function middleware(request : NextRequest) {
+  // check if there is a cookie for the preferred locale
+  const storedPrefferedLocale = request.cookies.get('lang');
 
-export function middleware(req : NextRequest) {
-  let lng
-  if (req.cookies.has(cookieName)) lng = acceptLanguage.get(req.cookies.get(cookieName).value)
-  if (!lng) lng = acceptLanguage.get(req.headers.get('Accept-Language'))
-  if (!lng) lng = fallbackLng
 
-  // Redirect if lng in path is not supported
-  if (
-    !languages.some(loc => req.nextUrl.pathname.startsWith(`/${loc}`)) &&
-    !req.nextUrl.pathname.startsWith('/_next')
-  ) {
-    return NextResponse.redirect(new URL(`/${lng}${req.nextUrl.pathname}`, req.url))
+  // Check if there is any supported locale in the pathname
+
+  const { pathname } = request.nextUrl
+  const pathnameHasLocale = locales.some(
+    (locale) => pathname.startsWith(`/${locale}/`) || pathname === `/${locale}`
+  )
+
+  // return when path already has a locale and its mathed with the stored preferred locale
+  if (pathnameHasLocale) {
+    console.log('pathname has locale');
+    const currentLocale = pathname.split('/')[1];
+    if (storedPrefferedLocale?.value == currentLocale) return;
   }
 
-  if (req.headers.has('referer')) {
-    const refererUrl = new URL(req.headers.get('referer'))
-    const lngInReferer = languages.find((l) => refererUrl.pathname.startsWith(`/${l}`))
-    const response = NextResponse.next()
-    if (lngInReferer) response.cookies.set(cookieName, lngInReferer)
-    return response
+  console.log('pathname has already local but not matched with stored preferred locale')
+
+  
+  
+  // console.log("Stored preferred locale: ", storedPrefferedLocale);
+  if (storedPrefferedLocale) {
+    if (pathnameHasLocale) {
+      // replace the locale in the pathname with the stored preferred locale
+      
+      const splittedPathname = request.nextUrl.pathname.split('/');
+      console.log("Splitted pathname: ", splittedPathname)
+      splittedPathname[1] = storedPrefferedLocale.value;
+      const newPathname = splittedPathname.join('/');
+      console.log("New pathname: ", newPathname)
+      
+      return NextResponse.redirect(request.nextUrl.origin + newPathname);
+    }
+
+
+    const redirectUrl = '/' + storedPrefferedLocale.value + request.nextUrl.pathname ;
+
+    return NextResponse.redirect(request.nextUrl.origin + redirectUrl);
   }
 
-  return NextResponse.next()
+
+
+
+
+  // Redirect if there is no locale in the pathname
+  const locale = getLocale(request)
+  request.nextUrl.pathname = `/${locale}${pathname}`
+  // e.g. incoming request is /products
+  // The new URL is now /en/products
+  const response = NextResponse.redirect(request.nextUrl);
+  // set cookies for the locale
+  response.cookies.set('lang', locale, {expires: new Date('9999-12-31')});
+  return response;
+
+
+
+  
+}
+ 
+export const config = {
+  matcher: [
+    // Skip all internal paths (_next)
+    '/((?!_next).*)',
+    // Optional: only run on root (/) URL
+    // '/'
+  ],
 }
